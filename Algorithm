@@ -1,0 +1,50 @@
+1:  /* Stage 1: Data Ingestion and Robust Sanitization */
+2:  Load D_raw; preserve immutable raw accident repository on persistent storage;
+3:  Identify numerical features with missing values; compute training medians and impute NaN cells;
+4:  Compute interquartile range IQR = Q3 - Q1 for Duration_Minutes; cap extreme values at Q3 + 1.5 * IQR;
+5:  Generate cleaned baseline dataset D_clean = Preprocess(D_raw);
+6:  
+7:  /* Stage 2: Multimodal Feature Engineering */
+8:  Extract temporal components: Hour in [0, 23], DayOfWeek in [0, 6], Month, and binary indicator Is_Night;
+9:  Derive natural language description metrics: Description_Length and Description_WordCount;
+10: Encode road network infrastructure: parse Is_Interstate, Is_USHighway, and Has_Speed_Reducing_Feature;
+11: Compute target-aligned frequency encodings for high-cardinality nominals (Street, Zipcode, City, County);
+12: Formulate composite Speed-Violation Risk Score: SVRS = f(Road_Class, Speed_Limit, Night, Visibility);
+13: Construct enriched feature matrix X in R^{N x D} (D = 35+ engineered features) and binary target y in {0, 1};
+14: 
+15: /* Stage 3: Stratified Partitioning and Leakage Control */
+16: Execute stratified split: (X_train, y_train), (X_val, y_val), (X_test, y_test) <- StratifiedSplit(X, y, r, S);
+17: Verify class balance: ensure P(y = 1) = 26.9% and P(y = 0) = 73.1% across all subsets;
+18: Fit standard scaler and median vectors strictly on X_train; cache transformation parameters Theta_prep;
+19: 
+20: /* Stage 4: Multi-Model Benchmark and 5-Fold Stratified Cross-Validation */
+21: For each candidate architecture M_j in M do:
+22:     Initialize K-fold stratified cross-validation on X_train using seed S = 42;
+23:     For each fold k in {1, ..., K} do:
+24:         Train M_j on fold training partition; compute validation loss and update gradients;
+25:     End For
+26:     Fit M_j on full X_train; compute training accuracy Acc_train and test accuracy Acc_test on X_test;
+27:     Calculate evaluation metric vector E_j = [Accuracy, Precision, Recall, Macro_F1, ROC_AUC, Loss, Kappa, MCC];
+28: End For
+29: 
+30: /* Stage 5: Three-Rule Elimination Filtering */
+31: For each model M_j in M do:
+32:     Compute generalization gap: Delta_gap = |Acc_train(M_j) - Acc_test(M_j)|;
+33:     If Acc_test(M_j) < Acc_min then Disqualify M_j (Underfitting Violation);
+34:     Else If Acc_test(M_j) > Acc_max then Disqualify M_j (Data Leakage Violation);
+35:     Else If Delta_gap > Gap_max then Disqualify M_j (Overfitting Gap Violation: MLP disqualified at 5.23%);
+36:     Else Retain M_j in qualified set M_qual;
+37: End For
+38: 
+39: /* Stage 6: Champion Selection and Byte-Level Serialization */
+40: Evaluate M_qual across primary selection criteria (Test Accuracy, ROC-AUC, Macro-F1, Inference Latency);
+41: Designate LightGBM as champion model: M* <- LightGBM (Acc: 94.00%, ROC-AUC: 97.20%, F1: 92.35%);
+42: Serialize champion model to disk: JoblibDump(M*, 'outputs/Models/LightGBM.pkl');
+43: 
+44: /* Stage 7: Dual-Tier Model Explainability and Real-Time Inference */
+45: Extract global split importances: R_feat = GetSplitFrequencies(M*, 300 trees);
+46: Sample representative test subset X_sample (N = 500); initialize TreeExplainer(M*);
+47: Compute Shapley attribution matrix: Phi = TreeSHAP(M*, X_sample);
+48: Generate global SHAP feature importance bar plot and beeswarm directionality distribution;
+49: Deploy real-time inference pipeline: for incoming incident x_new, compute hat{y} = M*(Transform(x_new, Theta_prep));
+50: Return M*, Theta_prep, R_feat, Phi.
